@@ -25,25 +25,27 @@ func generateRandomLocation() Location {
 	}
 }
 
-func sendLocation(loc Location, wg *sync.WaitGroup) {
+func sendLocationWorker(ch <-chan Location, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	url := "http://localhost:8081/location" // Update with your server URL
 
-	jsonData, err := json.Marshal(loc)
-	if err != nil {
-		fmt.Println("Error encoding JSON:", err)
-		return
-	}
+	for loc := range ch {
+		jsonData, err := json.Marshal(loc)
+		if err != nil {
+			fmt.Println("Error encoding JSON:", err)
+			return
+		}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		fmt.Println("Error sending request:", err)
-		return
-	}
-	defer resp.Body.Close()
+		resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+		if err != nil {
+			fmt.Println("Error sending request:", err)
+			return
+		}
+		defer resp.Body.Close()
 
-	fmt.Println("Response Status:", resp.Status)
+		fmt.Println("Response Status:", resp.Status)
+	}
 }
 
 func main() {
@@ -52,17 +54,29 @@ func main() {
 
 	// Number of concurrent requests
 	numRequests := 10000
+	numWorkers := 6 // Number of workers to process requests simultaneously
 
-	// WaitGroup to wait for all goroutines to finish
+	// Create a buffered channel
+	requests := make(chan Location, numRequests)
+
+	// WaitGroup to wait for all workers to finish
 	var wg sync.WaitGroup
-	wg.Add(numRequests)
 
-	// Send location data in parallel
-	for i := 0; i < numRequests; i++ {
-		loc := generateRandomLocation()
-		go sendLocation(loc, &wg)
+	// Start workers
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go sendLocationWorker(requests, &wg)
 	}
 
-	// Wait for all goroutines to finish
+	// Enqueue location data
+	for i := 0; i < numRequests; i++ {
+		loc := generateRandomLocation()
+		requests <- loc
+	}
+
+	// Close the channel to signal workers to finish
+	close(requests)
+
+	// Wait for all workers to finish
 	wg.Wait()
 }
